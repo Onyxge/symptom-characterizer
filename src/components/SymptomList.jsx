@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 // 1. Import db and firestore functions
-import { db } from '../firebase';
+import { db } from '../firebaseConfig';
 import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
-
+ 
 function SymptomList() {
   const [symptoms, setSymptoms] = useState([]); // To hold the list of symptoms
   const [loading, setLoading] = useState(true); // To show a loading message
