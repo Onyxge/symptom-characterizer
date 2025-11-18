@@ -1,10 +1,9 @@
-// Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
 import { getFirestore, enableMultiTabIndexedDbPersistence } from "firebase/firestore";
-// TODO: Add SDKs for Firebase products that you want to use
+import { getAuth } from "firebase/auth"
 // https://firebase.google.com/docs/web/setup#available-libraries
 
-// Your web app's Firebase configuration
+// Firebase configuration
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -19,6 +18,7 @@ const app = initializeApp(firebaseConfig);
 
 // Initialize Cloud Firestore and get a reference to the service
 const db = getFirestore(app);
+const auth = getAuth(app);
 
 // Enable offline persistence
 // This is the magic line that meets the SRS requirement!
@@ -34,6 +34,4 @@ enableMultiTabIndexedDbPersistence(db)
       console.warn('Firebase persistence is not available in this browser.');
     }
   });
-
-// Export the firestore database instance for use in other components
-export { db };
+export { db,auth };
