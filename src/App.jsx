@@ -2,26 +2,23 @@ import React, { useState, useRef, useEffect } from 'react';
 import SymptomForm from './components/SymptomForm';
 import SymptomList from './components/SymptomList';
 import Login from './components/Login';
+import Section from './components/Section'; 
 import { db, auth } from './firebaseConfig';
-import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
+import { collection, getDocs, writeBatch, doc, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 
-// --- NEW: Helper function to get name from email ---
 const getNameFromEmail = (email) => {
   if (!email) return 'User';
-  // Get the part before the @
   const name = email.split('@')[0];
-  // Capitalize the first letter
   return name.charAt(0).toUpperCase() + name.slice(1);
 };
-// ----------------------------------------------------
+
 
 function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  //  searchTerm state is gone from here ---
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -40,7 +37,6 @@ function App() {
     }
   };
 
-  // --- Export/Import function ---
   const formatCsvField = (data) => {
     if (data === null || data === undefined) return '""';
     let str = Array.isArray(data) ? data.join(';') : String(data);
@@ -50,7 +46,6 @@ function App() {
 
   const handleExportJSON = async () => {
     setIsExporting(true);
-    // rest of JSON export function
     try {
       const querySnapshot = await getDocs(collection(db, 'symptoms'));
       const symptomsData = [];
@@ -72,13 +67,11 @@ function App() {
       console.error("Error exporting JSON: ", error);
       alert("Error: Could not export JSON data.");
     }
-    // ...
     setIsExporting(false);
   };
 
   const handleExportCSV = async () => {
     setIsExporting(true);
-    // rest of CSV export function
     try {
       const querySnapshot = await getDocs(collection(db, 'symptoms'));
       let csvContent = "data:text/csv;charset=utf-8,";
@@ -108,53 +101,82 @@ function App() {
       console.error("Error exporting CSV: ", error);
       alert("Error: Could not export CSV data.");
     }
-    // ...
     setIsExporting(false);
   };
 
   const triggerFileInput = () => {
     fileInputRef.current.click();
   };
-
-  const handleImport = async (event) => {
+const handleImport = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
+
     if (file.type !== 'application/json') {
       alert('Error: Please select a valid .json file.');
       return;
     }
+
+    if (!user) {
+      alert("You must be logged in to import data.");
+      return;
+    }
+
     setIsImporting(true);
     const reader = new FileReader();
+
     reader.onload = async (e) => {
       try {
         const symptomsFromFile = JSON.parse(e.target.result);
+
         if (!Array.isArray(symptomsFromFile)) {
           throw new Error('Invalid JSON format: Not an array.');
         }
+
+        // Check duplicates logic...
         const symptomsCollection = collection(db, 'symptoms');
         const querySnapshot = await getDocs(symptomsCollection);
         const existingNames = new Set();
         querySnapshot.forEach((doc) => {
-          existingNames.add(doc.data().name.toLowerCase());
+          const data = doc.data();
+          if (data.userId === user.uid) {
+            existingNames.add(data.name.toLowerCase());
+          }
         });
+
         const symptomsToImport = symptomsFromFile.filter((symptom) => {
           return symptom.name && !existingNames.has(symptom.name.toLowerCase());
         });
+        
         const duplicateCount = symptomsFromFile.length - symptomsToImport.length;
+
         if (symptomsToImport.length === 0) {
-          alert(`Import complete. All ${duplicateCount} symptom(s) in the file already exist in your database.`);
+          alert(`Import complete. All ${duplicateCount} symptom(s) already exist in your list.`);
           setIsImporting(false);
           event.target.value = null;
           return;
         }
-        if (window.confirm(`Found ${symptomsFromFile.length} symptoms in the file.\n\n${symptomsToImport.length} are NEW and will be imported.\n${duplicateCount} are duplicates and will be skipped.\n\nContinue?`)) {
+
+        if (window.confirm(`Found ${symptomsFromFile.length} symptoms.\n\n${symptomsToImport.length} are NEW and will be imported.\n${duplicateCount} are duplicates.\n\nContinue?`)) {
+          
           const batch = writeBatch(db);
+
           symptomsToImport.forEach((symptom) => {
+            //  --- CLEAN UP: Remove old IDs or bad data ---
+            const { id, userId, createdAt, ...cleanData } = symptom;
+
             const newDocRef = doc(symptomsCollection);
-            batch.set(newDocRef, symptom);
+            
+            //--- FIX: Explicitly add User ID and reset Timestamp ---
+            batch.set(newDocRef, {
+              ...cleanData,
+              userId: user.uid,        // Matches the current user
+              createdAt: serverTimestamp(), // Sets to "Now" so sorting works
+              collaborators: [user.uid]     // Ensures the "Share" feature works for these too
+            });
           });
+
           await batch.commit();
-          alert(`Successfully imported ${symptomsToImport.length} new symptoms! ${duplicateCount} duplicates were skipped.`);
+          alert(`Successfully imported ${symptomsToImport.length} symptoms!`);
         }
       } catch (error) {
         console.error("Error importing file: ", error);
@@ -164,9 +186,9 @@ function App() {
         event.target.value = null;
       }
     };
+
     reader.readAsText(file);
   };
-  // --- (End of import/export) ---
 
   if (authLoading) {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
@@ -176,60 +198,45 @@ function App() {
     return <Login />;
   }
 
-  // If user is logged in, show the main app
   return (
     <div className="max-w-4xl mx-auto p-4">
       
-      <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
-        <h1 className="text-3xl font-bold">
-          Symptom Characterizer
-        </h1>
-        <div className="flex flex-wrap items-center space-x-2">
-          {/*  Use the new name function*/}
-          <span className="text-sm text-gray-600 hidden sm:block">
-            {getNameFromEmail(user.email)}
-          </span>
-          <button
-            onClick={handleSignOut}
-            className="bg-gray-500 text-white px-3 py-1 rounded-md hover:bg-gray-600 text-sm"
-          >
-            Sign Out
-          </button>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Symptom Characterizer</h1>
+          <p className="text-sm text-gray-600">Welcome, {getNameFromEmail(user.email)}!</p>
         </div>
+        <button
+          onClick={handleSignOut}
+          className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-md text-sm hover:bg-gray-200 w-full sm:w-auto"
+        >
+          Sign Out
+        </button>
       </div>
       
-      <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
-        {/*  Welcome the user by name */}
-        <h2 className="text-2xl font-semibold">
-          Welcome, {getNameFromEmail(user.email)}!
-        </h2>
-        <div className="flex flex-wrap space-x-2">
-          {/* (Import/Export buttons) */}
-          <button onClick={triggerFileInput} disabled={isImporting || isExporting} className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:bg-gray-400">
+      {/* --- Using the imported Section component --- */}
+      <Section title="Data Tools (Import / Export)">
+        <div className="flex flex-col sm:flex-row gap-2">
+          <button onClick={triggerFileInput} disabled={isImporting || isExporting} className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:bg-gray-400 text-sm text-center">
             {isImporting ? 'Importing...' : 'Import JSON'}
           </button>
-          <button onClick={handleExportJSON} disabled={isExporting || isImporting} className="bg-purple-600 text-white px-4 py-2 rounded-md hover:bg-purple-700 disabled:bg-gray-400">
-            {isExporting ? '...' : 'Export JSON'}
+          <button onClick={handleExportJSON} disabled={isExporting || isImporting} className="flex-1 bg-purple-600 text-white px-4 py-2 rounded-md hover:bg-purple-700 disabled:bg-gray-400 text-sm text-center">
+            Export JSON
           </button>
-          <button onClick={handleExportCSV} disabled={isImporting || isExporting} className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400">
-            {isExporting ? '...' : 'Export CSV'}
+          <button onClick={handleExportCSV} disabled={isExporting || isImporting} className="flex-1 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 text-sm text-center">
+            Export CSV
           </button>
         </div>
-      </div>
+      </Section>
 
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleImport}
-        accept="application/json"
-        className="hidden"
-      />
+      <input type="file" ref={fileInputRef} onChange={handleImport} accept="application/json" className="hidden" />
 
-      <SymptomForm user={user} />
+      <Section title="Add New Symptom" defaultOpen={true} highlight={true}>
+        <SymptomForm user={user} />
+      </Section>
 
-      <hr className="my-6" />
+      <hr className="my-6 border-gray-100" />
 
-      {/*  Pass the user prop, but not searchTerm */}
       <SymptomList user={user} />
     </div>
   );
